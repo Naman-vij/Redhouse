@@ -1,0 +1,12 @@
+{
+  "site_id": "demo-house",
+  "grid_m": 0.5,
+  "boundary": [[0,0],[24,0],[24,18],[0,18]],
+  "obstacles": [
+    {"type": "house", "polygon": [[6,4],[16,4],[16,12],[6,12]]}
+  ],
+  "entrances": [
+    {"id": "front_door", "point": [11,4]},
+    {"id": "side_door",  "point": [6,9]}
+  ]
+}
