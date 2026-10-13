@@ -1,0 +1,310 @@
+# template.yaml - RedHouse on AWS.
+#
+# WHAT THIS BUILDS
+#   CloudFront (HTTPS, one address for everything)
+#     |-- /api/* and /health  -> one small server (EC2) that runs the Python backend
+#     '-- everything else     -> a private S3 bucket holding the built React page
+#   A second private S3 bucket keeps uploaded sites (only the extracted shapes, never the picture).
+#   The server calls Amazon Bedrock for the plain-words summary using its own IAM role: no keys anywhere.
+#
+# NOTES
+#   - The server has no SSH and no key pair. To look inside it, use Session Manager in the EC2 console.
+#   - CloudFront adds a secret header; the server refuses requests without it, so the only way in is CloudFront.
+#   - CloudFront talks to the server over plain HTTP inside AWS (CloudFront cannot validate a certificate on an
+#     EC2 address). Visitors always see HTTPS. For production you would put a load balancer with a certificate in front.
+#   - Code updates do not touch this template: deploy.sh uploads app.tgz and runs /usr/local/bin/redhouse-update.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: RedHouse - camera-coverage simulator (CloudFront + EC2 + S3 + Bedrock)
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+    Description: Bucket that holds app.tgz (made by deploy.sh).
+  CodeKey:
+    Type: String
+    Default: app.tgz
+  BedrockModel:
+    Type: String
+    Default: global.amazon.nova-2-lite-v1:0
+    Description: Model or inference-profile ID used for the plain-words summary. Empty = built-in sentences only.
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large]
+  CloudFrontPrefixList:
+    Type: String
+    Description: ID of the AWS-managed CloudFront origin-facing prefix list in this region (deploy.sh looks it up).
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  # ---------------------------------------------------------------- the shared secret between CloudFront and the server
+  OriginSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Header value CloudFront sends so the server can tell its requests from anyone else's.
+      GenerateSecretString:
+        PasswordLength: 40
+        ExcludePunctuation: true
+
+  # ---------------------------------------------------------------- network: one public subnet, nothing else
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: redhouse}]
+  Gateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref Vpc, InternetGatewayId: !Ref Gateway}
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+  Routes:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: {RouteTableId: !Ref Routes, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref Gateway}
+  RoutesToSubnet:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref Subnet, RouteTableId: !Ref Routes}
+  ServerGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Port 8000, from CloudFront only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourcePrefixListId: !Ref CloudFrontPrefixList
+
+  # ---------------------------------------------------------------- storage (private, encrypted)
+  SitesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: forget-uploaded-sites-after-30-days
+            Status: Enabled
+            Prefix: sites/
+            ExpirationInDays: 30
+  PageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  PageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PageBucket
+      PolicyDocument:
+        Statement:
+          - Sid: OnlyThisCloudFrontMayRead
+            Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub "${PageBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  # ---------------------------------------------------------------- the server's permissions
+  ServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Policies:
+        - PolicyName: redhouse
+          PolicyDocument:
+            Statement:
+              - Sid: ReadTheCode
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${ArtifactBucket}/${CodeKey}"
+              - Sid: KeepUploadedSites
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub "${SitesBucket.Arn}/sites/*"
+              - Sid: CountUploadedSites
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt SitesBucket.Arn
+              - Sid: ReadTheOriginSecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref OriginSecret
+              - Sid: AskBedrock
+                Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*"
+                  - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/*"
+  ServerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: {Roles: [!Ref ServerRole]}
+
+  # ---------------------------------------------------------------- the server
+  Server:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref ServerProfile
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref ServerGroup]
+      MetadataOptions: {HttpTokens: required, HttpEndpoint: enabled}
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: {VolumeSize: 16, VolumeType: gp3, Encrypted: true}
+      Tags: [{Key: Name, Value: redhouse-server}]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > /var/log/redhouse-setup.log 2>&1
+
+          dnf install -y python3.12 python3.12-pip tar || dnf install -y python3.11 python3.11-pip tar
+          id redhouse >/dev/null 2>&1 || useradd --system --home-dir /opt/redhouse --shell /sbin/nologin redhouse
+          mkdir -p /opt/redhouse
+
+          # Everything that changes between deployments is written here; the secret is read when the server starts.
+          cat > /usr/local/bin/redhouse-update <<'UPDATE'
+          #!/bin/bash
+          # Fetch the latest app.tgz, install its libraries, restart the server. Safe to run again.
+          set -euo pipefail
+          PY=$(command -v python3.12 || command -v python3.11)
+          cd /opt/redhouse
+          aws s3 cp "s3://${ArtifactBucket}/${CodeKey}" /tmp/app.tgz --region ${AWS::Region}
+          rm -rf new && mkdir new && tar xzf /tmp/app.tgz -C new
+          rm -rf previous
+          [ -d current ] && mv current previous
+          mv new current
+          [ -d venv ] || "$PY" -m venv venv
+          venv/bin/pip install --quiet -r current/backend/requirements.txt
+          SECRET=$(aws secretsmanager get-secret-value --secret-id "${OriginSecret}" --query SecretString --output text --region ${AWS::Region})
+          umask 077
+          cat > /etc/redhouse.env <<ENV
+          AWS_REGION=${AWS::Region}
+          REDHOUSE_BEDROCK_MODEL=${BedrockModel}
+          REDHOUSE_SITES_BUCKET=${SitesBucket}
+          REDHOUSE_ORIGIN_SECRET=$SECRET
+          REDHOUSE_WARMUP=1
+          ENV
+          chown -R redhouse:redhouse /opt/redhouse
+          systemctl restart redhouse
+          UPDATE
+          chmod 755 /usr/local/bin/redhouse-update
+
+          cat > /etc/systemd/system/redhouse.service <<'UNIT'
+          [Unit]
+          Description=RedHouse API
+          After=network-online.target
+
+          [Service]
+          User=redhouse
+          WorkingDirectory=/opt/redhouse/current/backend
+          EnvironmentFile=/etc/redhouse.env
+          ExecStart=/opt/redhouse/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable redhouse
+          /usr/local/bin/redhouse-update
+
+  # ---------------------------------------------------------------- the front door
+  PageAccess:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-page"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: RedHouse
+        HttpVersion: http2
+        PriceClass: PriceClass_All
+        DefaultRootObject: index.html
+        Origins:
+          - Id: page
+            DomainName: !GetAtt PageBucket.RegionalDomainName
+            S3OriginConfig: {OriginAccessIdentity: ""}
+            OriginAccessControlId: !GetAtt PageAccess.Id
+          - Id: api
+            DomainName: !GetAtt Server.PublicDnsName
+            CustomOriginConfig:
+              HTTPPort: 8000
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue: !Sub "{{resolve:secretsmanager:${OriginSecret}:SecretString:::}}"
+        DefaultCacheBehavior:
+          TargetOriginId: page
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6          # CachingOptimized
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad        # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+          - PathPattern: /health
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+Outputs:
+  SiteUrl:
+    Value: !Sub "https://${Distribution.DomainName}"
+  DistributionId:
+    Value: !Ref Distribution
+  PageBucketName:
+    Value: !Ref PageBucket
+  SitesBucketName:
+    Value: !Ref SitesBucket
+  ServerId:
+    Value: !Ref Server

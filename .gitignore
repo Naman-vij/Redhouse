@@ -5,3 +5,6 @@ node_modules/
 .env
 .aws-sam/
 *.log
+
+release/
+redhouse-release.tgz

@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+mangum
+httpx
+numpy
+shapely
+opencv-python-headless
+python-multipart
+pymupdf
+boto3
+pytest

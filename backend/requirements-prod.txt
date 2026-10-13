@@ -1,0 +1,11 @@
+# Exact versions the deployed server runs (tested together). requirements.txt is for development (adds pytest).
+fastapi==0.143.0
+uvicorn[standard]==0.53.0
+mangum==0.22.0
+httpx==0.28.1
+numpy==2.5.3
+shapely==2.2.0
+opencv-python-headless==5.0.0.93
+python-multipart==0.0.32
+pymupdf==1.28.2
+boto3==1.43.112

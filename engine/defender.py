@@ -11,6 +11,7 @@ What changed from the one-camera version:
 """
 
 import numpy as np
+from dataclasses import replace
 from twin import Twin
 from cameras import Camera
 from coverage import camera_probability_grid, combine_cameras, risk_grid
@@ -38,7 +39,9 @@ def build_risk(twin: Twin, cameras: list[Camera]) -> np.ndarray:
     "chance at least one camera sees you" maths from coverage.py).
     """
     grids = [camera_probability_grid(twin, c.position, c.footprint, c.max_range_m)
-             for c in cameras]
+             for c in cameras if c.online]
+    if not grids:                      # every camera offline -> nothing watches
+        return np.zeros((twin.n_rows, twin.n_cols))
     return risk_grid(combine_cameras(grids))
 
 
@@ -58,9 +61,9 @@ def with_rotation(cameras: list[Camera], camera_name: str, angle: float) -> list
     out = []
     for c in cameras:
         if c.name == camera_name:
-            out.append(Camera(c.name, c.position,
-                              rotate_footprint(c.footprint, c.position, angle),
-                              c.max_range_m))
+            # NOTE: heading_deg turns with the footprint, so the map draws the camera where it now points
+            head = None if c.heading_deg is None else (c.heading_deg + angle) % 360
+            out.append(replace(c, footprint=rotate_footprint(c.footprint, c.position, angle), heading_deg=head))
         else:
             out.append(c)
     return out
@@ -107,6 +110,14 @@ def verify_on_held_out(twin, cameras, target_point, held_out_points,
 
 def describe_fix(search_result: dict, verify_result: dict) -> dict:
     """Turn the numbers into a recommendation a person can act on."""
+    if search_result["baseline_rate"] <= 0.0:
+        # already nobody gets in: say so, instead of suggesting more cameras
+        return {
+            "change_type": "none_needed",
+            "description": "This door is already well covered: no simulated intruder gets through it with every camera working.",
+            "before_success_rate": 0.0,
+            "after_success_rate": 0.0,
+        }
     if not search_result["improved"]:
         return {
             "change_type": "none",

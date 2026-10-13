@@ -20,6 +20,22 @@ class Camera:
     position: tuple[float, float]
     footprint: np.ndarray
     max_range_m: float
+    online: bool = True   # offline cameras contribute no coverage
+    # NOTE: where the camera was MOUNTED pointing, and how wide it sees. The
+    # footprint (above) is what the maths uses; these two let the map draw the
+    # view wedge. Optional so older code that builds a Camera by hand still works.
+    heading_deg: float | None = None
+    fov_deg: float | None = None
+
+
+def points_needed(fov_deg, max_range_m, grid_m, per_cell=6, floor=3000):
+    """
+    How many random footprint points it takes to cover every grid cell of a
+    wedge. Fewer points than cells leaves holes (speckle) in the coverage.
+    Indoors the grid is fine (0.25 m) and ranges are long, so 3,000 is not enough.
+    """
+    cells = (fov_deg / 360.0) * np.pi * max_range_m ** 2 / (grid_m ** 2)
+    return int(max(floor, per_cell * cells))
 
 
 def make_wedge_footprint(position, heading_deg, fov_deg, max_range_m,
@@ -67,5 +83,5 @@ def make_demo_cameras() -> list[Camera]:
     cams = []
     for i, (name, pos, heading, fov) in enumerate(specs):
         fp = make_wedge_footprint(pos, heading, fov, rng_range, seed=i)
-        cams.append(Camera(name, pos, fp, rng_range))
+        cams.append(Camera(name, pos, fp, rng_range, heading_deg=float(heading), fov_deg=float(fov)))
     return cams
