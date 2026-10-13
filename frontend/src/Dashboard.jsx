@@ -22,7 +22,7 @@
 // numbers the simulator produced.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { deleteSite, getExplain, getFix, getOutage, getPlan, getScene } from './api'
+import { deleteSite, getExplain, getFix, getOutage, getPlan, getScene, reportUrl } from './api'
 import { doorName, fixAngle, turnText, wrap180 } from './lib/format'
 import { useDebounced } from './lib/useDebounced'
 import { useRing } from './lib/useRing'
@@ -464,7 +464,7 @@ export default function Dashboard({ site, onUpload, onHome }) {
             anyOffline={offline.length > 0}
           />
 
-          <PlainWords state={words} />
+          <PlainWords state={words} archetype={archetype} site={site} reportHref={plan.status === 'ok' ? reportUrl(archetype, site) : null} />
 
           <OutageTable data={outage} offline={offline} live={ring.liveNames} onShow={toggleOffline} />
 

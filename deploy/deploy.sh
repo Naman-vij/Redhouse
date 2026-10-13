@@ -5,6 +5,7 @@
 #
 # First run: builds everything (about 10 minutes). Later runs: just ships new code and the new page.
 # Optional:  REDHOUSE_BEDROCK_MODEL=<model id>  bash deploy.sh      (default: global.amazon.nova-2-lite-v1:0)
+# Optional:  REDHOUSE_EMAIL_FROM=<verified address>  bash deploy.sh    (turns on "Email the report")
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -15,6 +16,13 @@ export AWS_DEFAULT_REGION="$REGION"
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 BUCKET="redhouse-artifacts-$ACCOUNT-$REGION"
 MODEL="${REDHOUSE_BEDROCK_MODEL-global.amazon.nova-2-lite-v1:0}"
+# Sender for report emails: REDHOUSE_EMAIL_FROM=you@example.com bash deploy.sh   (remembered on later runs)
+EMAIL_FROM="${REDHOUSE_EMAIL_FROM-}"
+if [ -z "$EMAIL_FROM" ]; then
+  EMAIL_FROM="$(aws cloudformation describe-stacks --stack-name "$STACK" \
+    --query "Stacks[0].Parameters[?ParameterKey=='EmailFrom'].ParameterValue" --output text 2>/dev/null || true)"
+  [ "$EMAIL_FROM" = None ] && EMAIL_FROM=""
+fi
 
 echo "Region $REGION, account $ACCOUNT"
 for f in app.tgz template.yaml frontend-dist/index.html; do
@@ -37,7 +45,7 @@ PREFIX_LIST="$(aws ec2 describe-managed-prefix-lists \
   --query 'PrefixLists[0].PrefixListId' --output text)"
 aws cloudformation deploy --stack-name "$STACK" --template-file template.yaml \
   --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset \
-  --parameter-overrides "ArtifactBucket=$BUCKET" "BedrockModel=$MODEL" "CloudFrontPrefixList=$PREFIX_LIST"
+  --parameter-overrides "ArtifactBucket=$BUCKET" "BedrockModel=$MODEL" "EmailFrom=$EMAIL_FROM" "CloudFrontPrefixList=$PREFIX_LIST"
 
 out() { aws cloudformation describe-stacks --stack-name "$STACK" \
           --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
@@ -67,6 +75,9 @@ for i in $(seq 1 90); do
     echo
     echo "RedHouse is live:  $URL"
     echo "Check the plain-words summary at:  $URL/api/explain   (you want \"source\":\"bedrock\")"
+    echo "Ring webhook address:  $(out WebhookUrl)"
+    echo "Set the Ring webhook key (once):  bash set-ring-key.sh"
+    if [ -n "$EMAIL_FROM" ]; then echo "Report emails are sent from:  $EMAIL_FROM"; else echo "Report emails are off. See README: Email the report."; fi
     exit 0
   fi
   printf '.'; sleep 10

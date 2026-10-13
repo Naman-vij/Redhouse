@@ -860,3 +860,12 @@ tr.is-off th { box-shadow: inset 3px 0 0 var(--breach); }
 /* which showed as a big blob; draw the focus ring around the dot instead, the same way doors do */
 .sitemap .camera { outline: none; }
 .sitemap .camera:focus-visible .camera-hit { stroke: var(--watch); stroke-width: 0.22; }
+
+.plain-report { margin: 14px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.plain-report .button { text-decoration: none; }
+.plain-email { margin: 14px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.plain-email label { font-size: 0.9rem; }
+.plain-email input { flex: 1 1 14rem; min-width: 0; max-width: 22rem; padding: 8px 10px; font: inherit; border: 1px solid #8a8a8a; border-radius: 6px; background: #fff; color: inherit; }
+.plain-email .button:disabled { opacity: 0.6; cursor: progress; }
+.plain-email-note { flex-basis: 100%; margin: 0; }
+.plain-email-note.is-error { color: #a4161a; }

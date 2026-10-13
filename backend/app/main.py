@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from mangum import Mangum
 
-from app.routes import demo, plan, ring_cameras, ring_status, scene, sites, explain
+from app.routes import demo, plan, ring_cameras, ring_status, scene, sites, explain, report, webhooks
 
 app = FastAPI(title="RedHouse API", version="0.1.0")
 
@@ -47,6 +47,8 @@ app.include_router(scene.router)
 app.include_router(plan.router)
 app.include_router(sites.router)
 app.include_router(explain.router)
+app.include_router(report.router)
+app.include_router(webhooks.router)
 
 
 # NOTE: the first "best setup" answer takes about ten seconds to work out, and is then remembered. On AWS the

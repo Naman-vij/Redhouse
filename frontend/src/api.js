@@ -81,7 +81,29 @@ export function getExplain(archetype, site, signal) {
   return request('/api/explain', { params: { archetype, site }, signal })
 }
 
+/**
+ * The address of the PDF report (backend routes/report.py). It is a plain link, not a fetch, so the browser
+ * downloads the file itself: <a href={reportUrl(archetype, site)} download>.
+ */
+export function reportUrl(archetype, site) {
+  const qs = new URLSearchParams()
+  if (archetype) qs.set('archetype', archetype)
+  if (site) qs.set('site', site)
+  const query = qs.toString()
+  return `${BASE}/api/report${query ? `?${query}` : ''}`
+}
+
 /** The recommended fix for a door (backend routes/demo.py). */
+/** Email the PDF report to one address. Resolves with nothing; rejects with an ApiError that says what to tell the person. */
+export function emailReport(archetype, site, email) {
+  return request('/api/report/email', {
+    method: 'POST',
+    params: { archetype, site },
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+}
+
 export function getFix(door, archetype, site, signal) {
   return request('/api/demo/audit', { params: { door, archetype, site }, signal })
 }

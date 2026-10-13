@@ -21,8 +21,8 @@ find "$OUT/stage" -name "__pycache__" -type d -prune -exec rm -rf {} +
 tar czf "$OUT/app.tgz" -C "$OUT/stage" .
 rm -rf "$OUT/stage"
 
-cp "$ROOT/deploy/template.yaml" "$ROOT/deploy/deploy.sh" "$ROOT/deploy/teardown.sh" "$ROOT/deploy/README.md" "$OUT/"
-sed -i 's/\r$//' "$OUT/template.yaml" "$OUT/deploy.sh" "$OUT/teardown.sh"      # Windows line endings would break the scripts on Linux
+cp "$ROOT/deploy/template.yaml" "$ROOT/deploy/deploy.sh" "$ROOT/deploy/teardown.sh" "$ROOT/deploy/set-ring-key.sh" "$ROOT/deploy/README.md" "$OUT/"
+sed -i 's/\r$//' "$OUT/template.yaml" "$OUT/deploy.sh" "$OUT/teardown.sh" "$OUT/set-ring-key.sh"      # Windows line endings would break the scripts on Linux
 TGZ="$(dirname "$OUT")/redhouse-release.tgz"
 tar czf "$TGZ" -C "$OUT" .
 echo "built $TGZ"

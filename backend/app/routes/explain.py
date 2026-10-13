@@ -19,18 +19,25 @@ router = APIRouter(prefix="/api", tags=["explain"])
 _CACHE: dict = {}
 
 
-@router.get("/explain")
-def get_explanation(response: Response, archetype: str = Query(default="opportunist"), site=Depends(get_site)):
+def explanation_for(archetype: str, site) -> tuple[dict, bool]:
+    """(the explanation, whether it came from the cache or may be remembered). Used by this route and the PDF report."""
     twin, cameras = site
     key = (archetype, _fingerprint(twin, cameras))
-    if key not in _CACHE:
-        plan = get_plan(archetype=archetype, site=site)
-        out = explainer.explain(plan, camera_names=[c.name for c in cameras])
-        if out["source"] == "bedrock" or out.get("note") == "Bedrock is not configured.":
-            _CACHE[key] = out                          # a failed call is retried next time, not remembered
-        else:
-            response.headers["Cache-Control"] = "no-store"
-            return out
+    if key in _CACHE:
+        return _CACHE[key], True
+    plan = get_plan(archetype=archetype, site=site)
+    out = explainer.explain(plan, camera_names=[c.name for c in cameras])
+    if out["source"] == "bedrock" or out.get("note") == "Bedrock is not configured.":
+        _CACHE[key] = out                              # a failed call is retried next time, not remembered
         if len(_CACHE) > 64:
             _CACHE.pop(next(iter(_CACHE)))
-    return _CACHE[key]
+        return out, True
+    return out, False
+
+
+@router.get("/explain")
+def get_explanation(response: Response, archetype: str = Query(default="opportunist"), site=Depends(get_site)):
+    out, remembered = explanation_for(archetype, site)
+    if not remembered:
+        response.headers["Cache-Control"] = "no-store"
+    return out

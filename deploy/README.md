@@ -11,6 +11,19 @@ You need: your AWS account, and the file `redhouse-release.tgz`.
 4. Wait. It prints `RedHouse is live: https://xxxx.cloudfront.net`. Open that address.
 5. Check `https://xxxx.cloudfront.net/api/explain`. You want `"source":"bedrock"`.
 
+## Ring webhooks (optional)
+The deploy prints the webhook address, `https://xxxx.cloudfront.net/ring/webhook`. Give that to Ring, then in CloudShell run
+`bash set-ring-key.sh` and paste the signing key at the hidden prompt. It is stored in AWS Secrets Manager, never in the code.
+Until a key is set, the server refuses every webhook.
+
+## Email the report (optional)
+The page has an "Email the report" box. It needs Amazon SES, in the same region as the site.
+1. SES console > **Identities** > **Create identity** > **Email address**. Use an address you own (for example your Gmail). Open the email AWS sends and click its link. The status must say **Verified**.
+2. In CloudShell, in the release folder: `REDHOUSE_EMAIL_FROM=you@example.com bash deploy.sh`. Later runs remember the address.
+3. New AWS accounts start in SES **test mode**: mail goes only to addresses you have verified the same way. To send to anyone, SES console > **Account dashboard** > **Request production access** (AWS usually answers within a day). Until then the box tells other visitors to use the download button.
+
+Limits, to stop abuse: 3 reports an hour to one address, 6 an hour per visitor. The address is used for that one message and is not stored.
+
 ## Update later
 Upload the new `redhouse-release.tgz` the same way and run the same command. It ships the new code and page in about two minutes.
 

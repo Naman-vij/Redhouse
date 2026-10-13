@@ -74,7 +74,8 @@ def _facts(plan: dict) -> dict:
     return {
         "kind": "property",
         "intruders_out_of_100_getting_in_now": {r["door"]: _pct(r["rate"]) for r in plan["now"]},
-        "intruders_out_of_100_getting_in_after": {r["door"]: _pct(r["rate"]) for r in plan["final"]},
+        "intruders_out_of_100_getting_in_after_turning_only": {r["door"]: _pct(r["after"]) for r in best["doors"]},
+        "intruders_out_of_100_getting_in_after_turning_and_adding": {r["door"]: _pct(r["rate"]) for r in plan["final"]},
         "turn": [{"camera": c["camera"], "degrees": c["degrees"], "direction": c["direction"]} for c in best["changes"]],
         "add_cameras": len(more["additions"]),
         "target_out_of_100": _pct(plan["target"]),

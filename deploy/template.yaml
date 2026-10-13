@@ -2,7 +2,7 @@
 #
 # WHAT THIS BUILDS
 #   CloudFront (HTTPS, one address for everything)
-#     |-- /api/* and /health  -> one small server (EC2) that runs the Python backend
+#     |-- /api/*, /ring/* and /health -> one small server (EC2) that runs the Python backend
 #     '-- everything else     -> a private S3 bucket holding the built React page
 #   A second private S3 bucket keeps uploaded sites (only the extracted shapes, never the picture).
 #   The server calls Amazon Bedrock for the plain-words summary using its own IAM role: no keys anywhere.
@@ -28,6 +28,10 @@ Parameters:
     Type: String
     Default: global.amazon.nova-2-lite-v1:0
     Description: Model or inference-profile ID used for the plain-words summary. Empty = built-in sentences only.
+  EmailFrom:
+    Type: String
+    Default: ""
+    Description: Address the report emails come from. It must be verified in Amazon SES first. Empty = email turned off.
   InstanceType:
     Type: String
     Default: t3.medium
@@ -48,6 +52,13 @@ Resources:
       GenerateSecretString:
         PasswordLength: 40
         ExcludePunctuation: true
+
+  # The key Ring signs webhooks with. Its value is set after deploy by set-ring-key.sh, so it is never in this file.
+  RingKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Ring webhook signing key (RING_HMAC_KEY). Set with set-ring-key.sh.
+      SecretString: not-set-yet
 
   # ---------------------------------------------------------------- network: one public subnet, nothing else
   Vpc:
@@ -161,10 +172,14 @@ Resources:
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt SitesBucket.Arn
-              - Sid: ReadTheOriginSecret
+              - Sid: ReadTheSecrets
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: !Ref OriginSecret
+                Resource: [!Ref OriginSecret, !Ref RingKey]
+              - Sid: SendTheReportEmail
+                Effect: Allow
+                Action: ses:SendEmail
+                Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
               - Sid: AskBedrock
                 Effect: Allow
                 Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
@@ -214,13 +229,17 @@ Resources:
           [ -d venv ] || "$PY" -m venv venv
           venv/bin/pip install --quiet -r current/backend/requirements.txt
           SECRET=$(aws secretsmanager get-secret-value --secret-id "${OriginSecret}" --query SecretString --output text --region ${AWS::Region})
+          RING=$(aws secretsmanager get-secret-value --secret-id "${RingKey}" --query SecretString --output text --region ${AWS::Region})
+          [ "$RING" = "not-set-yet" ] && RING=""
           umask 077
           cat > /etc/redhouse.env <<ENV
           AWS_REGION=${AWS::Region}
           REDHOUSE_BEDROCK_MODEL=${BedrockModel}
+          REDHOUSE_EMAIL_FROM=${EmailFrom}
           REDHOUSE_SITES_BUCKET=${SitesBucket}
           REDHOUSE_ORIGIN_SECRET=$SECRET
           REDHOUSE_WARMUP=1
+          RING_HMAC_KEY="$RING"
           ENV
           chown -R redhouse:redhouse /opt/redhouse
           systemctl restart redhouse
@@ -291,6 +310,12 @@ Resources:
             AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad        # CachingDisabled
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+          - PathPattern: /ring/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
           - PathPattern: /health
             TargetOriginId: api
             ViewerProtocolPolicy: https-only
@@ -308,3 +333,7 @@ Outputs:
     Value: !Ref SitesBucket
   ServerId:
     Value: !Ref Server
+  WebhookUrl:
+    Value: !Sub "https://${Distribution.DomainName}/ring/webhook"
+  RingKeySecretId:
+    Value: !Ref RingKey
