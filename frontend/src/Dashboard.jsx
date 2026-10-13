@@ -27,18 +27,22 @@ import { doorName, fixAngle, turnText, wrap180 } from './lib/format'
 import { useDebounced } from './lib/useDebounced'
 import { useRing } from './lib/useRing'
 import SiteMap from './components/SiteMap'
-import { DoorTabs, Exposure, IntruderPicker } from './components/Findings'
 import FixCard from './components/FixCard'
-import CameraStrip from './components/CameraStrip'
 import OutageTable from './components/OutageTable'
 import RingPanel from './components/RingPanel'
 import BestSetup from './components/BestSetup'
-import TurnPanel from './components/TurnPanel'
 import PlainWords from './components/PlainWords'
 import FloorCard from './components/FloorCard'
-import { forgetSite } from './lib/sites'
+import Shell, { NAV } from './components/Shell'
+import Icon from './components/Icon'
+import CoverageCard from './components/CoverageCard'
+import Recommendations from './components/Recommendations'
+import CameraCards from './components/CameraCards'
+import ResultsBar from './components/ResultsBar'
+import ReportCard from './components/ReportCard'
+import { forgetSite, recentSites } from './lib/sites'
 
-export default function Dashboard({ site, onUpload, onHome }) {
+export default function Dashboard({ site, onUpload, onHome, onOpen }) {
   const [archetype, setArchetype] = useState('opportunist')
   const [door, setDoor] = useState(null) // null until the first answer picks the most exposed door
   const [manualOffline, setManualOffline] = useState([])
@@ -46,7 +50,9 @@ export default function Dashboard({ site, onUpload, onHome }) {
   const [showNew, setShowNew] = useState(false)
   const [source, setSource] = useState(null)
   const [selected, setSelected] = useState(null) // camera being turned
-  const [layers, setLayers] = useState({ coverage: true, routes: true, blind: true })
+  const [view, setView] = useState('both') // what the map shows: 'coverage', 'intruders' or 'both'
+  const layers = { coverage: view !== 'intruders', routes: view !== 'coverage', blind: view !== 'intruders' }
+  const [current, setCurrent] = useState('plan') // the sidebar item for the section on screen
   const [ringOpen, setRingOpen] = useState(false)
 
   const [scene, setScene] = useState({ data: null, loading: true, error: null, rotate: null })
@@ -264,34 +270,92 @@ export default function Dashboard({ site, onUpload, onHome }) {
     onHome()
   }
 
-  return (
-    <div className="app">
-      {/* ---------------------------------------------------------------- header */}
-      <header className="masthead">
-        <div className="brand">
-          <h1 className="wordmark">
-            <a href="./" className="wordmark-link" onClick={(e) => { e.preventDefault(); onHome() }}>RedHouse</a>
-          </h1>
-          <p className="tagline">
-            {indoor ? 'Where an intruder can move unseen on your floor' : 'Where intruders get past your cameras'}
-          </p>
-        </div>
-        <div className="masthead-actions">
-          <button className="button" onClick={onUpload}>Upload a plan</button>
-          <button
-          className={`ring-pill ${ring.phase === 'watching' ? 'is-live' : ''}`}
-          aria-expanded={ringOpen}
-          aria-controls="ring-panel"
-          onClick={() => setRingOpen((o) => !o)}
-        >
-          <span className="ring-pill-dot" aria-hidden="true" />
-          {ring.phase === 'watching'
-            ? `Ring connected: ${liveCount} live ${liveCount === 1 ? 'camera' : 'cameras'}`
-            : 'Connect Ring'}
-          </button>
-        </div>
-      </header>
+  // ---- the sidebar's highlight follows the section you are looking at ----------
+  const hasData = Boolean(data)
+  useEffect(() => {
+    if (!hasData || typeof IntersectionObserver === 'undefined') return undefined
+    const seen = new Map()
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => seen.set(e.target.id, e.isIntersecting))
+        const first = NAV.find((n) => seen.get(n.id))
+        if (first) setCurrent(first.id)
+      },
+      { rootMargin: '-10% 0px -55% 0px' },
+    )
+    NAV.forEach((n) => {
+      const el = document.getElementById(n.id)
+      if (el) io.observe(el)
+    })
+    return () => io.disconnect()
+  }, [hasData, indoor])
 
+  // "Show on map" on a camera card: select it, and bring the map into view only if it is off screen.
+  function pickCamera(name) {
+    setSelected((cur) => (cur === name ? null : name))
+    document.getElementById('plan')?.scrollIntoView({ block: 'nearest' })
+  }
+
+  // ---- the site picker: the demo house and the sites this browser has made --------
+  const known = recentSites()
+  const options = [
+    { id: '', label: site === null && siteTitle ? siteTitle : 'Demo house' },
+    ...known.filter((k) => k.id !== site).map((k) => ({ id: k.id, label: k.name || 'Uploaded plan' })),
+  ]
+  if (site !== null && !known.some((k) => k.id === site)) options.push({ id: site, label: siteTitle || 'Uploaded plan' })
+  if (site !== null) {
+    const here = options.find((o) => o.id === site)
+    if (here && siteTitle) here.label = siteTitle
+  }
+  if (site === null && options[0]) options[0].label = siteTitle || 'Demo house'
+
+  const top = (
+    <>
+      <label className="site-picker">
+        <Icon name="search" size={18} />
+        <span className="sr-only">Site to show</span>
+        <select value={site ?? ''} onChange={(e) => onOpen(e.target.value)}>
+          {options.map((o) => (
+            <option key={o.id || 'demo'} value={o.id}>{o.label}</option>
+          ))}
+        </select>
+        <Icon name="chevron" size={16} />
+      </label>
+      <button className="button" onClick={onUpload}>
+        <Icon name="upload" size={17} /> Upload a plan
+      </button>
+      <button
+        className={`button button-dark ring-button ${ring.phase === 'watching' ? 'is-live' : ''}`}
+        aria-expanded={ringOpen}
+        aria-controls="ring-panel"
+        onClick={() => setRingOpen((o) => !o)}
+      >
+        <Icon name="ring" size={17} />
+        {ring.phase === 'watching'
+          ? `Ring connected: ${liveCount} live ${liveCount === 1 ? 'camera' : 'cameras'}`
+          : 'Connect Ring'}
+      </button>
+    </>
+  )
+
+  const details = data ? (
+    <div className="site-details">
+      <h2>Site details</h2>
+      <dl>
+        <div><dt>Site</dt><dd>{siteTitle}</dd></div>
+        <div>
+          <dt>Cameras</dt>
+          <dd>{realCameras.length} total, {liveCount} live from Ring{offline.length > 0 ? `, ${offline.length} offline` : ''}</dd>
+        </div>
+        <div><dt>{indoor ? 'Routes to' : 'Tracking'}</dt><dd>{activeDoor ? doorName(activeDoor) : ''}</dd></div>
+        <div><dt>Simulation</dt><dd>{data.starts_tested} simulated intruders</dd></div>
+      </dl>
+      {site !== null && <button className="button" onClick={forget}>Delete this site</button>}
+    </div>
+  ) : null
+
+  return (
+    <Shell onHome={onHome} nav details={details} current={current} top={top}>
       {ringOpen && (
         <div id="ring-panel">
           <RingPanel
@@ -315,137 +379,137 @@ export default function Dashboard({ site, onUpload, onHome }) {
 
       {data && (
         <>
-          <main className="workspace">
-            {/* ------------------------------------------------------------ left: the plan */}
-            <div className="plan">
-              <div className="plan-toolbar">
-                <h2 className="section-heading">{indoor ? 'Floor plan' : 'Site plan'}</h2>
-                <div className="layer-toggles">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={layers.coverage}
-                      onChange={(e) => setLayers({ ...layers, coverage: e.target.checked })}
+          <div className="page">
+            <div className="row-top">
+              {/* ------------------------------------------------------------ the plan */}
+              <section className="card plan-card" id="plan" aria-labelledby="plan-title">
+                <div className="plan-head">
+                  <div>
+                    <h2 id="plan-title">{indoor ? 'Floor plan' : 'Site plan'}</h2>
+                    <p>Click a camera, then drag its handle or use its slider. The numbers update as you turn it.</p>
+                  </div>
+                  <div className="plan-tools">
+                    <span className="seg-label" id="view-label">View</span>
+                    <div className="seg" role="group" aria-labelledby="view-label">
+                      {[['coverage', 'Coverage'], ['intruders', 'Intruders'], ['both', 'Both']].map(([id, label]) => (
+                        <button key={id} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {changed && source && (
+                  <div className="preview-banner" role="status">
+                    <span>
+                      Showing {SOURCE_NAMES[source]}.{' '}
+                      {Object.entries(turns).filter(([, a]) => a !== 0).map(([n, a]) => `${n} ${turnText(a)}`).join(', ')}
+                      {Object.keys(turns).length > 0 ? '. ' : ''}The numbers on this page show that layout.
+                    </span>
+                    <button className="button button-small" onClick={resetAll}>Back to current cameras</button>
+                  </div>
+                )}
+
+                <figure className={scene.loading || pendingNumbers ? 'sheet is-loading' : 'sheet'}>
+                  <div className="sheet-scroll">
+                    <SiteMap
+                      scene={data}
+                      door={activeDoor}
+                      layers={layers}
+                      liveNames={ring.liveNames}
+                      ghosts={ghosts}
+                      headings={headings}
+                      selected={selected}
+                      loading={scene.loading}
+                      onSelectDoor={setDoor}
+                      onSelectCamera={(name) => setSelected((cur) => (cur === name ? null : name))}
+                      onAim={(name, worldHeading) => {
+                        // the handle points at worldHeading; the turn is how far that is from the mounted heading
+                        const cam = realCameras.find((c) => c.name === name)
+                        if (cam) turnCamera(name, Math.round(wrap180(worldHeading - mounted(cam)) / 5) * 5)
+                      }}
+                      onNudge={(name, delta) => turnCamera(name, (turns[name] ?? 0) + delta)}
                     />
-                    Camera coverage
-                  </label>
-                  {indoor && (
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={layers.blind}
-                        onChange={(e) => setLayers({ ...layers, blind: e.target.checked })}
-                      />
-                      Blind spots
-                    </label>
-                  )}
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={layers.routes}
-                      onChange={(e) => setLayers({ ...layers, routes: e.target.checked })}
-                    />
-                    Intruder routes
-                  </label>
-                </div>
-              </div>
+                  </div>
+                  {/* the drawing's title block: facts about THIS sheet */}
+                  <figcaption className="title-block">
+                    <dl>
+                      <div><dt>{indoor ? 'Floor' : 'Site'}</dt><dd>{siteTitle}</dd></div>
+                      <div>
+                        <dt>Cameras</dt>
+                        <dd>
+                          {realCameras.length} total, {liveCount} live from Ring
+                          {offline.length > 0 ? `, ${offline.length} offline` : ''}
+                          {suggested.length > 0 ? `, ${suggested.length} suggested` : ''}
+                        </dd>
+                      </div>
+                      <div><dt>{indoor ? 'Routes to' : 'Tracing'}</dt><dd>{activeDoor ? doorName(activeDoor) : ''}</dd></div>
+                      <div><dt>Intruders</dt><dd>{data.starts_tested} simulated</dd></div>
+                    </dl>
+                  </figcaption>
+                </figure>
 
-              {changed && source && (
-                <div className="preview-banner" role="status">
-                  <span>
-                    Showing {SOURCE_NAMES[source]}.{' '}
-                    {Object.entries(turns).filter(([, a]) => a !== 0).map(([n, a]) => `${n} ${turnText(a)}`).join(', ')}
-                    {Object.keys(turns).length > 0 ? '. ' : ''}The numbers on this page show that layout.
-                  </span>
-                  <button className="button button-quiet" onClick={resetAll}>Back to current cameras</button>
-                </div>
-              )}
+                <ul className="legend" aria-label="Map key">
+                  <li><span className="key key-coverage" /> Seen by a camera (darker is more likely)</li>
+                  {indoor && <li><span className="key key-blind" /> Blind spot: under a 1 in 4 chance of being seen</li>}
+                  <li><span className="key key-breach" /> Route that {indoor ? 'reached a protected spot' : 'got in'} unseen</li>
+                  <li><span className="key key-caught" /> Route that was caught</li>
+                  <li><span className="key key-live" /> Camera live from Ring</li>
+                  {suggested.length > 0 && <li><span className="key key-new" /> Suggested new camera</li>}
+                </ul>
+                {!selectedCam && (
+                  <p className="muted turn-hint">Pick a camera on the map, or use a camera card below.</p>
+                )}
+              </section>
 
-              <figure className={scene.loading || pendingNumbers ? 'sheet is-loading' : 'sheet'}>
-                <div className="sheet-scroll">
-                  <SiteMap
-                    scene={data}
-                    door={activeDoor}
-                    layers={layers}
-                    liveNames={ring.liveNames}
-                    ghosts={ghosts}
-                    headings={headings}
-                    selected={selected}
-                    loading={scene.loading}
-                    onSelectDoor={setDoor}
-                    onSelectCamera={(name) => setSelected((cur) => (cur === name ? null : name))}
-                    onAim={(name, worldHeading) => {
-                      // the handle points at worldHeading; the turn is how far that is from the mounted heading
-                      const cam = realCameras.find((c) => c.name === name)
-                      if (cam) turnCamera(name, Math.round(wrap180(worldHeading - mounted(cam)) / 5) * 5)
-                    }}
-                    onNudge={(name, delta) => turnCamera(name, (turns[name] ?? 0) + delta)}
-                  />
-                </div>
-
-                {/* the drawing's title block: facts about THIS sheet */}
-                <figcaption className="title-block">
-                  <dl>
-                    <div>
-                      <dt>{indoor ? 'Floor' : 'Site'}</dt>
-                      <dd>{siteTitle}</dd>
-                    </div>
-                    <div>
-                      <dt>Cameras</dt>
-                      <dd>
-                        {realCameras.length} total, {liveCount} live from Ring
-                        {offline.length > 0 ? `, ${offline.length} offline` : ''}
-                        {suggested.length > 0 ? `, ${suggested.length} suggested` : ''}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{indoor ? 'Routes to' : 'Tracing'}</dt>
-                      <dd>{activeDoor ? doorName(activeDoor) : ''}</dd>
-                    </div>
-                    <div>
-                      <dt>Intruders</dt>
-                      <dd>{data.starts_tested} simulated</dd>
-                    </div>
-                  </dl>
-                </figcaption>
-              </figure>
-
-              <ul className="legend" aria-label="Map key">
-                <li><span className="key key-coverage" /> Seen by a camera (darker is more likely)</li>
-                {indoor && <li><span className="key key-blind" /> Blind spot: under a 1 in 4 chance of being seen</li>}
-                <li><span className="key key-breach" /> Route that {indoor ? 'reached a protected spot' : 'got in'} unseen</li>
-                <li><span className="key key-caught" /> Route that was caught</li>
-                <li><span className="key key-live" /> Camera live from Ring</li>
-                {suggested.length > 0 && <li><span className="key key-new" /> Suggested new camera</li>}
-              </ul>
-
-              {selectedCam ? (
-                <TurnPanel
-                  camera={{ ...selectedCam, heading_deg: headings[selectedCam.name] }}
-                  angle={turns[selectedCam.name] ?? 0}
-                  suggestion={suggestion}
+              {/* --------------------------------------------------------- right: findings */}
+              <aside className="side-stack" aria-busy={scene.loading}>
+                <CoverageCard
                   doors={data.doors}
+                  active={activeDoor}
+                  onSelect={setDoor}
+                  rate={activeRate}
+                  indoor={indoor}
                   floor={indoor ? data.floor : null}
+                  archetype={archetype}
+                  summary={indoor ? '' : data.summary}
                   pending={pendingNumbers}
-                  onTurn={(a) => turnCamera(selectedCam.name, a)}
-                  onClose={() => setSelected(null)}
                 />
-              ) : (
-                <p className="muted turn-hint">
-                  Click a camera on the map to turn it. Drag its handle, or use the slider, and the numbers update.
-                </p>
-              )}
-
-              <CameraStrip cameras={realCameras} live={live} onToggle={toggleOffline} />
+                <Recommendations
+                  plan={plan}
+                  cameras={realCameras}
+                  headings={headings}
+                  doors={data.doors}
+                  indoor={indoor}
+                  floor={indoor ? data.floor : null}
+                  preview={source}
+                  onPreview={applyPreview}
+                />
+              </aside>
             </div>
 
-            {/* --------------------------------------------------------- right: findings */}
-            <aside className="findings" aria-busy={scene.loading}>
-              {indoor && <FloorCard floor={data.floor} summary={data.summary} changed={changed} />}
-              <DoorTabs doors={data.doors} active={activeDoor} onSelect={setDoor} indoor={indoor} />
-              <Exposure door={activeDoor} rate={activeRate} summary={indoor ? '' : data.summary} indoor={indoor} />
-              <IntruderPicker value={archetype} onChange={setArchetype} />
-              {!indoor && (
+            {/* ------------------------------------------------------------ the cameras */}
+            <CameraCards
+              cameras={realCameras}
+              live={live}
+              turns={turns}
+              headings={headings}
+              selected={selected}
+              doors={data.doors}
+              floor={indoor ? data.floor : null}
+              pending={pendingNumbers}
+              plan={plan}
+              preview={source}
+              onSelect={pickCamera}
+              onTurn={turnCamera}
+              onToggle={toggleOffline}
+              onPreview={applyPreview}
+            />
+
+            <div className="row-two">
+              <PlainWords state={words} />
+              {indoor ? (
+                <FloorCard floor={data.floor} summary={data.summary} changed={changed} />
+              ) : (
                 <FixCard
                   door={activeDoor}
                   state={fix}
@@ -454,39 +518,44 @@ export default function Dashboard({ site, onUpload, onHome }) {
                   anyOffline={offline.length > 0}
                 />
               )}
-            </aside>
-          </main>
+            </div>
 
-          <BestSetup
-            plan={plan}
-            preview={source}
-            onPreview={applyPreview}
-            anyOffline={offline.length > 0}
-          />
+            <BestSetup plan={plan} preview={source} onPreview={applyPreview} anyOffline={offline.length > 0} />
 
-          <PlainWords state={words} archetype={archetype} site={site} reportHref={plan.status === 'ok' ? reportUrl(archetype, site) : null} />
+            <div id="analytics">
+              <OutageTable data={outage} offline={offline} live={ring.liveNames} onShow={toggleOffline} />
+            </div>
 
-          <OutageTable data={outage} offline={offline} live={ring.liveNames} onShow={toggleOffline} />
+            <ReportCard reportHref={plan.status === 'ok' ? reportUrl(archetype, site) : null} archetype={archetype} site={site} />
 
-          <footer className="colophon">
-            <p>
-              {site === null
-                ? 'This is a simulation of a demo house. '
-                : `This is a simulation of ${indoor ? 'the floor' : 'the property'} you uploaded, read from your drawing. `}
-              The intruders are simulated with fixed random seeds, so the same question always gives the same
-              answer. Only cameras you link to a Ring device use real Ring data, and then only for their online
-              or offline status.
-              {indoor &&
-                ' What a camera sees is worked out from the camera’s position, direction, field of view and range, with walls and furniture blocking the view. Furniture drawn as a closed shape counts as solid.'}
-            </p>
-            {site !== null && (
+            <footer className="colophon">
               <p>
-                <button className="button button-quiet" onClick={forget}>Delete this site</button>
+                {site === null
+                  ? 'This is a simulation of a demo house. '
+                  : `This is a simulation of ${indoor ? 'the floor' : 'the property'} you uploaded, read from your drawing. `}
+                The intruders are simulated with fixed random seeds, so the same question always gives the same
+                answer. Only cameras you link to a Ring device use real Ring data, and then only for their online
+                or offline status.
+                {indoor &&
+                  ' What a camera sees is worked out from the camera’s position, direction, field of view and range, with walls and furniture blocking the view. Furniture drawn as a closed shape counts as solid.'}
               </p>
-            )}
-          </footer>
+            </footer>
+          </div>
+
+          <ResultsBar
+            archetype={archetype}
+            onArchetype={setArchetype}
+            door={activeDoor}
+            rate={activeRate}
+            indoor={indoor}
+            cameras={realCameras.length}
+            starts={data.starts_tested}
+            changed={changed}
+            onReset={resetAll}
+            reportHref={plan.status === 'ok' ? reportUrl(archetype, site) : null}
+          />
         </>
       )}
-    </div>
+    </Shell>
   )
 }

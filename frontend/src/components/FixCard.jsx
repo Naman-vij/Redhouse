@@ -14,7 +14,7 @@ export default function FixCard({ door, state, previewing, onTogglePreview, anyO
 
   if (state.status === 'loading') {
     return (
-      <section className="fix" aria-busy="true">
+      <section className="card fix" aria-busy="true">
         {heading}
         <p className="muted">Searching every camera and every turn…</p>
       </section>
@@ -22,7 +22,7 @@ export default function FixCard({ door, state, previewing, onTogglePreview, anyO
   }
   if (state.status === 'error') {
     return (
-      <section className="fix">
+      <section className="card fix">
         {heading}
         <p className="problem" role="alert">{state.message}</p>
       </section>
@@ -33,7 +33,7 @@ export default function FixCard({ door, state, previewing, onTogglePreview, anyO
 
   if (fix.change_type === 'none_needed') {
     return (
-      <section className="fix">
+      <section className="card fix">
         {heading}
         <p className="fix-main">Nothing to fix here.</p>
         <p className="muted">No simulated intruder gets through to the {doorWords(door)} with every camera working.</p>
@@ -43,7 +43,7 @@ export default function FixCard({ door, state, previewing, onTogglePreview, anyO
 
   if (fix.change_type === 'none') {
     return (
-      <section className="fix">
+      <section className="card fix">
         {heading}
         <p className="fix-main">Turning a camera will not help here.</p>
         <p className="muted">{fix.description}</p>
@@ -52,7 +52,7 @@ export default function FixCard({ door, state, previewing, onTogglePreview, anyO
   }
 
   return (
-    <section className="fix">
+    <section className="card fix">
       {heading}
       <p className="fix-main">
         Turn camera {fix.camera} by {fix.degrees}° {fix.direction}.

@@ -46,6 +46,19 @@ function pointer(cam, Y) {
   return [tip, left, right].map(([x, y]) => `${x.toFixed(2)},${Y(y).toFixed(2)}`).join(' ')
 }
 
+/** A label on a dark rounded tag, so it reads on any ground. Sized from the text (about 0.38 m a letter). */
+function Pill({ x, y, text, anchor = 'middle', className = '' }) {
+  const w = text.length * 0.38 + 0.95
+  const h = 1.08
+  const cx = anchor === 'start' ? x + w / 2 - 0.25 : anchor === 'end' ? x - w / 2 + 0.25 : x
+  return (
+    <g className={`pill ${className}`} pointerEvents="none">
+      <rect x={cx - w / 2} y={y - h / 2} width={w} height={h} rx={h / 2} />
+      <text x={cx} y={y} textAnchor="middle" dominantBaseline="central">{text}</text>
+    </g>
+  )
+}
+
 const polyPoints = (pts, Y) => pts.map(([x, y]) => `${x},${Y(y)}`).join(' ')
 const pathOf = (pts, Y) => pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x},${Y(y)}`).join(' ')
 
@@ -199,9 +212,7 @@ export default function SiteMap({
         <polygon key={i} className={indoor ? 'wall' : 'house'} points={polyPoints(ob, Y)} />
       ))}
       {house.length > 0 && (
-        <text className="map-label house-label" x={hx} y={Y(hy)} textAnchor="middle" dominantBaseline="middle">
-          House
-        </text>
+        <Pill x={hx} y={Y(hy)} text="House" className="pill-house" />
       )}
 
       {/* the property line goes on top of the fills so it stays crisp */}
@@ -276,15 +287,7 @@ export default function SiteMap({
           >
             {active && <circle className="door-ring" cx={x} cy={Y(y)} r="0.95" />}
             <circle className="door-dot" cx={x} cy={Y(y)} r="0.42" />
-            <text
-              className="map-label door-label"
-              x={x + ux * 1.7}
-              y={Y(y + uy * 1.7)}
-              textAnchor={anchor}
-              dominantBaseline="middle"
-            >
-              {doorName(e.id)}
-            </text>
+            <Pill x={x + ux * 1.7} y={Y(y + uy * 1.7)} text={doorName(e.id)} anchor={anchor} className="pill-door" />
           </g>
         )
       })}
@@ -293,9 +296,7 @@ export default function SiteMap({
       {indoor && (site.entries || []).map((e) => (
         <g key={`entry-${e.id}`} className="entry" transform={at(e.point[0], e.point[1])}>
           <rect className="entry-mark" x={e.point[0] - 0.4} y={Y(e.point[1]) - 0.4} width="0.8" height="0.8" transform={`rotate(45 ${e.point[0]} ${Y(e.point[1])})`} />
-          <text className="map-label entry-label" x={e.point[0]} y={Y(e.point[1]) + (e.point[1] < (miny + maxy) / 2 ? 1.5 : -1.2)} textAnchor="middle" dominantBaseline="middle">
-            {doorName(e.id)}
-          </text>
+          <Pill x={e.point[0]} y={Y(e.point[1]) + (e.point[1] < (miny + maxy) / 2 ? 1.5 : -1.2)} text={doorName(e.id)} className="pill-entry" />
         </g>
       ))}
 
@@ -338,9 +339,7 @@ export default function SiteMap({
             {!cam.online && (
               <path className="camera-cross" d={`M${x - 0.3},${Y(y) - 0.3}L${x + 0.3},${Y(y) + 0.3}M${x - 0.3},${Y(y) + 0.3}L${x + 0.3},${Y(y) - 0.3}`} />
             )}
-            <text className="map-label camera-label" x={x} y={Y(y) + 1.65} textAnchor="middle" dominantBaseline="middle">
-              {cam.proposed ? `${cam.name} new` : cam.online ? cam.name : `${cam.name} offline`}
-            </text>
+            <Pill x={x} y={Y(y) + 1.75} text={cam.proposed ? `${cam.name} new` : cam.online ? cam.name : `${cam.name} offline`} className="pill-camera" />
           </g>
         )
       })}

@@ -16,6 +16,6 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:8000',
       '/health': 'http://127.0.0.1:8000',
     },
-    allowedHosts: ['409c-101-115-133-224.ngrok-free.app'],
+    allowedHosts: ['https://24dc-129-127-202-54.ngrok-free.app/'],
   },
 })

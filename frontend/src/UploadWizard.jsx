@@ -19,6 +19,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { checkSite, createSite, previewPlan } from './api'
 import PlanCanvas from './components/PlanCanvas'
+import Shell from './components/Shell'
 import { SAMPLE_LAB } from './lib/sampleLab'
 import { recentSites, rememberSite } from './lib/sites'
 
@@ -313,17 +314,17 @@ export default function UploadWizard({ onCancel, onOpen }) {
 
   // ======================================================================================== render
   return (
-    <div className="app wizard">
-      <header className="masthead">
-        <div className="brand">
-          <h1 className="wordmark"><a href="./" className="wordmark-link" onClick={(e) => { e.preventDefault(); onCancel() }}>RedHouse</a></h1>
-          <p className="tagline">Add your own plan</p>
-        </div>
-        <div className="masthead-actions">
-          <button className="button button-quiet" onClick={onCancel}>Cancel</button>
-        </div>
-      </header>
-
+    <Shell
+      onHome={onCancel}
+      nav={false}
+      top={
+        <>
+          <h1 className="topbar-title">Add your own plan</h1>
+          <button className="button" onClick={onCancel}>Cancel</button>
+        </>
+      }
+    >
+      <div className="wizard-card wizard">
       <ol className="stepper" aria-label="Steps">
         {steps.map(([id, label], i) => (
           <li key={id} className={id === step ? 'is-current' : i < stepIndex ? 'is-done' : undefined} aria-current={id === step ? 'step' : undefined}>
@@ -563,7 +564,8 @@ export default function UploadWizard({ onCancel, onOpen }) {
           )}
         </aside>
       </div>
-    </div>
+      </div>
+    </Shell>
   )
 }
 

@@ -22,5 +22,13 @@ export default function App() {
       />
     )
   }
-  return <Dashboard key={site ?? 'demo'} site={site} onUpload={() => navigate('?new')} onHome={() => navigate('')} />
+  return (
+    <Dashboard
+      key={site ?? 'demo'}
+      site={site}
+      onUpload={() => navigate('?new')}
+      onHome={() => navigate('')}
+      onOpen={(id) => navigate(id ? `?site=${encodeURIComponent(id)}` : '')}
+    />
+  )
 }
