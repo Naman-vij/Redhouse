@@ -53,8 +53,11 @@ URL="$(out SiteUrl)"; DIST="$(out DistributionId)"; PAGE_BUCKET="$(out PageBucke
 
 if [ "$EXISTED" = yes ]; then
   echo "3/5 Updating the running server"
+  # The server's own update script was written when it first booted. Re-run the server's current start-up script
+  # (read back from the instance metadata) so changed settings, such as the email sender, reach it too.
   CMD="$(aws ssm send-command --instance-ids "$SERVER" --document-name AWS-RunShellScript \
-          --parameters 'commands=["/usr/local/bin/redhouse-update"]' --query Command.CommandId --output text)"
+          --parameters 'commands=["T=$(curl -sS -X PUT http://169.254.169.254/latest/api/token -H X-aws-ec2-metadata-token-ttl-seconds:60); curl -sS -H X-aws-ec2-metadata-token:$T http://169.254.169.254/latest/user-data -o /tmp/userdata.sh; bash /tmp/userdata.sh"]' \
+          --query Command.CommandId --output text)"
   aws ssm wait command-executed --command-id "$CMD" --instance-id "$SERVER" \
     || { echo "The server update failed. Output:"; aws ssm get-command-invocation --command-id "$CMD" --instance-id "$SERVER" \
          --query '[StandardOutputContent,StandardErrorContent]' --output text; exit 1; }
