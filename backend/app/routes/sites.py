@@ -10,6 +10,12 @@ site the rest of the API can analyse.
     GET    /api/sites/{id}        what is stored (names and sizes only)
     DELETE /api/sites/{id}        forget it
 
+    POST   /api/calibration/preview?site=   matching spots on a camera's picture and on the plan -> the ground
+                                            that camera really sees (nothing is saved)
+    POST   /api/calibration?site=           the same, and keep it with the camera. For the demo house (no
+                                            site) a copy of the demo is saved, and its new id comes back
+    DELETE /api/calibration?site=&camera=   go back to the guessed view for that camera
+
 Every other endpoint then takes  ?site=<id>  (no id means the demo house).
 
 SECURITY
@@ -27,11 +33,18 @@ import struct
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from shapely.geometry import Point
+from datetime import datetime, timezone
+from typing import Literal
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from pydantic import BaseModel, Field
 
 from app import engine_bridge  # noqa: F401  (puts engine/ on the path)
 from app import site_store
+from app.engine_bridge import SCENARIO_PATH
 
+import calibration
 import indoor
 import site_plan
 from cameras import Camera
@@ -234,11 +247,141 @@ def get_stored_site(site_id: str, response: Response):
         raise HTTPException(status_code=404, detail="That site was not found. It may have been deleted.")
     response.headers["Cache-Control"] = "no-store"
     return {"site_id": site_id, "meta": doc["meta"], "created": doc["created"],
-            "cameras": [{"name": c["name"], "online": c.get("online", True)} for c in doc["cameras"]]}
+            "cameras": [{"name": c["name"], "online": c.get("online", True), "calibrated": bool(c.get("calibration"))}
+                        for c in doc["cameras"]]}
 
 
 @router.delete("/sites/{site_id}", status_code=204)
 def delete_stored_site(site_id: str):
     if not site_store.delete(site_id):
         raise HTTPException(status_code=404, detail="That site was not found. It may have been deleted.")
+    return Response(status_code=204)
+
+
+# ----------------------------------------------------------------------
+# Calibrating a camera from its own picture  (engine/calibration.py does the maths)
+# ----------------------------------------------------------------------
+
+class CalibrationBody(BaseModel):
+    camera: str = Field(..., max_length=16)
+    image_points: list[list[float]] = Field(..., max_length=calibration.MAX_PAIRS)   # 0..1 across, 0..1 down
+    ground_points: list[list[float]] = Field(..., max_length=calibration.MAX_PAIRS)  # metres on the plan
+    source: Literal["ring", "upload"] = "upload"
+    captured_at: str | None = Field(default=None, max_length=40)
+    # Also work out where the camera is and which way it points, from the same spots (needs the picture's shape and
+    # a lens angle: Ring does not say how wide the camera sees, so it is assumed and can be adjusted).
+    place_camera: bool = False
+    aspect: float = Field(default=16 / 9, ge=0.3, le=4.0)          # picture width / height
+    lens_deg: float = Field(default=calibration.DEFAULT_LENS_DEG, ge=40, le=150)
+
+
+def _demo_records() -> list:
+    """The demo house's cameras as stored records (the same numbers make_demo_cameras() uses)."""
+    from cameras import make_demo_cameras
+    return [{"name": c.name, "position": [c.position[0], c.position[1]], "heading_deg": c.heading_deg,
+             "fov_deg": c.fov_deg, "range_m": c.max_range_m, "online": True} for c in make_demo_cameras()]
+
+
+def _records_for(site: str | None) -> list:
+    if site is None:
+        return _demo_records()
+    doc = site_store.read(site)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="That site was not found. It may have been deleted.")
+    return doc["cameras"]
+
+
+def _camera_index(records: list, name: str) -> int:
+    for i, r in enumerate(records):
+        if r["name"] == name:
+            return i
+    raise HTTPException(status_code=404, detail=f"There is no camera '{name}' on this site.")
+
+
+def _work_out(body: CalibrationBody, record: dict, twin=None) -> dict:
+    """The calibration for one camera. With place_camera, the camera is also (re)placed from the picture."""
+    position = tuple(record["position"])
+    pose = None
+    try:
+        if body.place_camera:
+            pose = calibration.place_camera(body.image_points, body.ground_points, body.aspect, body.lens_deg)
+            position = tuple(pose["position"])
+        cal = calibration.calibrate(body.image_points, body.ground_points, position, float(record["range_m"]))
+    except calibration.CalibrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    cal["position"] = list(position)
+    cal["pose"] = pose
+    if pose:
+        cal["warnings"] = pose["warnings"] + cal["warnings"]
+        if twin is not None and not twin.boundary.buffer(5.0).contains(Point(position)):
+            cal["warnings"].append("The camera comes out well outside the property. Check the spots, or adjust the lens width.")
+    return cal
+
+
+def _twin_for(site: str | None):
+    if site is None:
+        return Twin.from_file(SCENARIO_PATH)
+    found = site_store.load_site(site)
+    return found[0] if found else None
+
+
+@router.post("/calibration/preview")
+def preview_calibration(body: CalibrationBody, site: str | None = Query(default=None)):
+    """What the camera would see with these spots. Saves nothing, so the page can call it after every click."""
+    records = _records_for(site)
+    record = records[_camera_index(records, body.camera)]
+    return {"camera": body.camera, **_work_out(body, record, _twin_for(site))}
+
+
+@router.post("/calibration")
+def save_calibration(body: CalibrationBody, response: Response, site: str | None = Query(default=None)):
+    """
+    Keep the calibration with the camera. From now on the measured ground replaces the guessed wedge in every
+    result for this site. For the demo house a copy of the demo is saved (the demo itself is shared and never
+    changes), and the copy's id comes back so the page can switch to it.
+    """
+    records = [dict(r) for r in _records_for(site)]
+    i = _camera_index(records, body.camera)
+    cal = _work_out(body, records[i], _twin_for(site))
+    if not cal["checked"]:
+        # 4 spots always fit perfectly, so they prove nothing. The 5th is what catches a mismatched spot.
+        raise HTTPException(status_code=422, detail="Add a 5th spot so the view can be checked before it is saved.")
+    was = records[i].get("calibration", {}).get("was") or {"heading_deg": records[i]["heading_deg"],
+                                                           "fov_deg": records[i]["fov_deg"],
+                                                           "position": list(records[i]["position"])}
+    records[i] = {**records[i], "position": cal["position"], "heading_deg": cal["heading_deg"], "fov_deg": cal["fov_deg"],
+                  "calibration": {"ground": cal["ground"], "image_points": cal["image_points"],
+                                  "ground_points": cal["ground_points"], "checked": cal["checked"],
+                                  "max_error_m": cal["max_error_m"], "area_m2": cal["area_m2"],
+                                  "source": body.source, "captured_at": body.captured_at, "pose": cal["pose"],
+                                  "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                  "was": was}}
+    response.headers["Cache-Control"] = "no-store"
+    if site is None:
+        with open(SCENARIO_PATH) as f:
+            twin_dict = {**json.load(f), "name": "Demo house (calibrated)", "mode": "outdoor"}
+        twin = Twin(twin_dict)
+        minx, miny, maxx, maxy = twin.boundary.bounds
+        meta = {"name": "Demo house (calibrated)", "mode": "outdoor", "width_m": round(maxx - minx, 1),
+                "height_m": round(maxy - miny, 1), "area_m2": round(twin.boundary.area, 1),
+                "grid_m": twin.grid_m, "n_cameras": len(records)}
+        try:
+            site = site_store.save(twin_dict, records, meta)
+        except site_store.StoreFull:
+            raise HTTPException(status_code=507, detail="This server is full of saved sites. Delete one first.") from None
+        return _plain({"site_id": site, "created": True, "meta": meta, "camera": body.camera, **cal})
+    site_store.update_cameras(site, records)
+    return _plain({"site_id": site, "created": False, "camera": body.camera, **cal})
+
+
+@router.delete("/calibration", status_code=204)
+def delete_calibration(site: str = Query(...), camera: str = Query(..., max_length=16)):
+    """Forget a camera's calibration and go back to its guessed view (the heading it had before)."""
+    records = [dict(r) for r in _records_for(site)]
+    i = _camera_index(records, camera)
+    cal = records[i].pop("calibration", None)
+    if not cal:
+        raise HTTPException(status_code=404, detail=f"Camera {camera} is not calibrated.")
+    records[i].update(cal.get("was") or {})
+    site_store.update_cameras(site, records)
     return Response(status_code=204)

@@ -314,8 +314,11 @@ def _summary_box(explained: dict) -> str:
     return f'<h2>In plain words</h2><div class="box"><p>{esc(explained["text"])}</p><p class="muted">{label}</p></div>'
 
 
-def _method(plan: dict, archetype: str) -> str:
+def _method(plan: dict, archetype: str, calibrated: list | None = None) -> str:
     n = plan.get("starts_tested", 200)
+    cal = (f" {', '.join(calibrated)} {'was' if len(calibrated) == 1 else 'were'} calibrated from {'its' if len(calibrated) == 1 else 'their'} own "
+           "picture, so the ground they see is measured from that picture rather than assumed (how well they see it is still the model)."
+           if calibrated else "")
     return (
         "<h2>How these numbers were worked out</h2>"
         f'<p class="muted">{esc(n)} simulated intruders ("{esc(archetype)}" type) start at random points and take the route to the target '
@@ -324,7 +327,7 @@ def _method(plan: dict, archetype: str) -> str:
         "every figure in this report was measured on a second set it never saw. The same question always gives the same answer.</p>"
         '<p class="muted">Limits: the plan is flat (camera height and tilt are not modelled), the chance of being seen is a simple model, '
         "not measured on real video, and the intruders are simulated. Cameras are simulated from the positions and directions given; "
-        "only cameras linked to a Ring device use real Ring data, and then only for online or offline status.</p>")
+        f"only cameras linked to a Ring device use real Ring data for online or offline status.{esc(cal)}</p>")
 
 
 # ----------------------------------------------------------------------
@@ -352,7 +355,7 @@ def build_report(*, site_name: str, archetype: str, plan: dict, explained: dict,
         f'{"Red tint: floor nobody watches. " if plan.get("mode") == "indoor" else ""}'
         'The dot with an arrow is a camera and the arrow shows where it points. A camera marked "new" is a suggestion.</p>'
         f'{_outage(outage)}'
-        f'{_method(plan, archetype)}'
+        f'{_method(plan, archetype, [c["name"] for c in today["site"]["cameras"] if c.get("calibrated")])}'
     )
 
     story = pymupdf.Story(html=f"<html><body>{body}</body></html>", user_css=CSS, archive=archive)

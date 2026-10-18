@@ -126,6 +126,55 @@ export function getRingStatus(token, links, archetype, site, signal) {
   })
 }
 
+/**
+ * The newest picture a Ring camera has saved (backend routes/ring_cameras.py). Resolves with
+ * { url, capturedAt }: url is a blob: address for an <img>, only valid in this tab. Call
+ * URL.revokeObjectURL(url) when done. The picture is not kept on the server.
+ */
+export async function getRingSnapshot(token, deviceId, signal) {
+  let res
+  try {
+    res = await fetch(`${BASE}/api/ring/snapshot?device=${encodeURIComponent(deviceId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal,
+    })
+  } catch (err) {
+    if (err.name === 'AbortError') throw err
+    throw new ApiError(0, "Can't reach the RedHouse API.")
+  }
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const body = await res.json()
+      if (typeof body.detail === 'string') detail = body.detail
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, detail || `Ring answered with status ${res.status}.`)
+  }
+  const blob = await res.blob()
+  return { url: URL.createObjectURL(blob), capturedAt: res.headers.get('X-Captured-At') }
+}
+
+// ---- calibrating a camera from its own picture (backend routes/sites.py) ----
+
+const json = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
+/** What the camera would see with these matched spots. Saves nothing. */
+export function previewCalibration(site, body, signal) {
+  return request('/api/calibration/preview', { params: { site }, signal, ...json(body) })
+}
+
+/** Keep the calibration. For the demo house a copy is saved: the answer's site_id is then a new site. */
+export function saveCalibration(site, body) {
+  return request('/api/calibration', { params: { site }, ...json(body) })
+}
+
+/** Go back to the guessed view for one camera. */
+export function deleteCalibration(site, camera) {
+  return request('/api/calibration', { method: 'DELETE', params: { site, camera } })
+}
+
 // ---- uploading a site plan (backend routes/sites.py) -----------------------
 
 function form(file, extra = {}) {

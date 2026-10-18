@@ -22,14 +22,15 @@
 // numbers the simulator produced.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { deleteSite, getExplain, getFix, getOutage, getPlan, getScene, reportUrl } from './api'
+import { deleteCalibration, deleteSite, getExplain, getFix, getOutage, getPlan, getScene, reportUrl } from './api'
 import { doorName, fixAngle, turnText, wrap180 } from './lib/format'
 import { useDebounced } from './lib/useDebounced'
-import { useRing } from './lib/useRing'
+import { carryRingTo, useRing } from './lib/useRing'
 import SiteMap from './components/SiteMap'
 import FixCard from './components/FixCard'
 import OutageTable from './components/OutageTable'
 import RingPanel from './components/RingPanel'
+import CalibratePanel from './components/CalibratePanel'
 import BestSetup from './components/BestSetup'
 import PlainWords from './components/PlainWords'
 import FloorCard from './components/FloorCard'
@@ -40,7 +41,7 @@ import Recommendations from './components/Recommendations'
 import CameraCards from './components/CameraCards'
 import ResultsBar from './components/ResultsBar'
 import ReportCard from './components/ReportCard'
-import { forgetSite, recentSites } from './lib/sites'
+import { forgetSite, recentSites, rememberSite } from './lib/sites'
 
 export default function Dashboard({ site, onUpload, onHome, onOpen }) {
   const [archetype, setArchetype] = useState('opportunist')
@@ -54,6 +55,8 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
   const layers = { coverage: view !== 'intruders', routes: view !== 'coverage', blind: view !== 'intruders' }
   const [current, setCurrent] = useState('plan') // the sidebar item for the section on screen
   const [ringOpen, setRingOpen] = useState(false)
+  const [calibrating, setCalibrating] = useState(null) // name of the camera being measured from its picture
+  const [version, setVersion] = useState(0) // bumped when the site itself changes (a camera was calibrated)
 
   const [scene, setScene] = useState({ data: null, loading: true, error: null, rotate: null })
   const [fix, setFix] = useState({ status: 'loading' })
@@ -131,7 +134,7 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
       })
     return () => ctrl.abort()
     // offline is rebuilt each render, so depend on its text instead
-  }, [site, door, archetype, offline.join(','), rotateParam, addParam]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [site, version, door, archetype, offline.join(','), rotateParam, addParam]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Once the first answer has chosen the most exposed door, keep it fixed so the page doesn't jump around.
   useEffect(() => {
@@ -154,7 +157,7 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
         if (err.name !== 'AbortError') setFix({ status: 'error', message: err.message })
       })
     return () => ctrl.abort()
-  }, [site, activeDoor, archetype, indoor])
+  }, [site, version, activeDoor, archetype, indoor])
 
   // ---- the "if a camera fails" table ----------------------------------------
   useEffect(() => {
@@ -163,7 +166,7 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
       .then(setOutage)
       .catch(() => setOutage(null)) // the table is extra; the page works without it
     return () => ctrl.abort()
-  }, [site, archetype])
+  }, [site, version, archetype])
 
   // ---- the best setup (slow the first time) ----------------------------------
   useEffect(() => {
@@ -176,7 +179,7 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
         if (err.name !== 'AbortError') setPlan({ status: 'error', message: err.message })
       })
     return () => ctrl.abort()
-  }, [site, archetype])
+  }, [site, version, archetype])
 
   // ---- the plain-words summary (asked only after the plan is ready, so the plan is already cached) ----
   const [words, setWords] = useState({ status: 'loading' })
@@ -190,7 +193,7 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
         if (err.name !== 'AbortError') setWords({ status: 'error' }) // the card is extra; the page works without it
       })
     return () => ctrl.abort()
-  }, [plan.status, site, archetype])
+  }, [plan.status, site, version, archetype])
 
   // ---- helpers for the children ----------------------------------------------
   const toggleOffline = (name) =>
@@ -258,6 +261,34 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
     if (site === null) return `Demo house, ${size} property`
     return `${data.site.name || 'Uploaded plan'}, ${size}${indoor && data.floor ? `, ${Math.round(data.floor.open_floor_m2)} m² open floor` : ''}`
   }, [data, site, indoor])
+
+  // ---- measuring a camera's view from its own picture ------------------------------
+  const calibratingCam = realCameras.find((c) => c.name === calibrating) ?? null
+  const linkedToRing = (name) => ring.cameras.some((c) => c.name === name && c.source === 'ring')
+
+  function calibrated(result) {
+    setCalibrating(null)
+    resetAll()
+    if (result.created) {
+      // The demo house is shared and never changes, so the server saved a copy. Move to it, keeping Ring connected.
+      rememberSite({ id: result.site_id, name: result.meta?.name, mode: result.meta?.mode })
+      carryRingTo(result.site_id)
+      onOpen(result.site_id)
+    } else {
+      setVersion((v) => v + 1)
+    }
+  }
+
+  async function uncalibrate(name) {
+    if (!window.confirm(`Go back to the guessed view for camera ${name}? The measured view will be forgotten.`)) return
+    try {
+      await deleteCalibration(site, name)
+      resetAll()
+      setVersion((v) => v + 1)
+    } catch (err) {
+      window.alert(err.message)
+    }
+  }
 
   async function forget() {
     if (!window.confirm('Delete this site from the server? The plan image was never kept; this removes the outline and cameras.')) return
@@ -356,6 +387,18 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
 
   return (
     <Shell onHome={onHome} nav details={details} current={current} top={top}>
+      {calibratingCam && data && (
+        <CalibratePanel
+          site={site}
+          scene={data}
+          camera={calibratingCam}
+          ring={ring}
+          ringLinked={linkedToRing(calibratingCam.name)}
+          onClose={() => setCalibrating(null)}
+          onSaved={calibrated}
+        />
+      )}
+
       {ringOpen && (
         <div id="ring-panel">
           <RingPanel
@@ -454,6 +497,9 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
                   <li><span className="key key-breach" /> Route that {indoor ? 'reached a protected spot' : 'got in'} unseen</li>
                   <li><span className="key key-caught" /> Route that was caught</li>
                   <li><span className="key key-live" /> Camera live from Ring</li>
+                  {realCameras.some((c) => c.calibrated) && (
+                    <li><span className="key key-measured" /> View measured from the camera’s picture</li>
+                  )}
                   {suggested.length > 0 && <li><span className="key key-new" /> Suggested new camera</li>}
                 </ul>
                 {!selectedCam && (
@@ -503,6 +549,8 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
               onTurn={turnCamera}
               onToggle={toggleOffline}
               onPreview={applyPreview}
+              onCalibrate={setCalibrating}
+              onUncalibrate={site !== null ? uncalibrate : null}
             />
 
             <div className="row-two">
@@ -534,8 +582,9 @@ export default function Dashboard({ site, onUpload, onHome, onOpen }) {
                   ? 'This is a simulation of a demo house. '
                   : `This is a simulation of ${indoor ? 'the floor' : 'the property'} you uploaded, read from your drawing. `}
                 The intruders are simulated with fixed random seeds, so the same question always gives the same
-                answer. Only cameras you link to a Ring device use real Ring data, and then only for their online
-                or offline status.
+                answer. Only cameras you link to a Ring device use real Ring data for their online or offline
+                status. A camera marked “Measured view” has the ground it sees measured from its own picture; every
+                other camera’s view is worked out from its position, direction, field of view and range.
                 {indoor &&
                   ' What a camera sees is worked out from the camera’s position, direction, field of view and range, with walls and furniture blocking the view. Furniture drawn as a closed shape counts as solid.'}
               </p>

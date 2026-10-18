@@ -134,6 +134,16 @@ def _route_points(twin, route) -> list:
     return [[_r2(x), _r2(y)] for x, y in line.coords]
 
 
+def _view_polygon(cam):
+    """A calibrated camera's measured ground, in metres, turned by however far the camera is turned now. None otherwise."""
+    if cam.view_polygon is None:
+        return None
+    a = math.radians(((cam.heading_deg or 0.0) - (cam.view_heading_deg or 0.0)))
+    px, py = cam.position
+    return [[_r2(px + (x - px) * math.cos(a) - (y - py) * math.sin(a)),
+             _r2(py + (x - px) * math.sin(a) + (y - py) * math.cos(a))] for x, y in cam.view_polygon]
+
+
 def _spread(items: list, limit: int) -> list:
     """Up to `limit` items, evenly spread through the list."""
     if len(items) <= limit:
@@ -231,7 +241,10 @@ def get_scene(
         # so the map draws exactly what the numbers were worked out from.
         cam_json.append({"name": c.name, "position": [_r2(c.position[0]), _r2(c.position[1])],
                          "heading_deg": _r2((c.heading_deg or 0.0) % 360), "fov_deg": c.fov_deg or 90.0,
-                         "range_m": c.max_range_m, "online": c.online, "proposed": c.name in new_names})
+                         "range_m": c.max_range_m, "online": c.online, "proposed": c.name in new_names,
+                         "calibrated": c.view_polygon is not None,
+                         # the ground a calibrated camera really sees, turned with the camera if it is turned
+                         "view_polygon": _view_polygon(c)})
 
     floor = None
     if twin.mode == "indoor":

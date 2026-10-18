@@ -117,6 +117,25 @@ def save(twin_dict: dict, cameras: list, meta: dict) -> str:
     return site_id
 
 
+def update_cameras(site_id: str, cameras: list) -> bool:
+    """Replace a stored site's camera records (used when a camera is calibrated). False if there is no such site."""
+    doc = read(site_id)
+    if doc is None:
+        return False
+    doc["cameras"] = _plain(cameras)
+    _CACHE.pop(site_id, None)
+    bucket = _bucket()
+    if bucket:
+        _s3().put_object(Bucket=bucket, Key=_key(site_id), Body=json.dumps(doc).encode(),
+                         ContentType="application/json", ServerSideEncryption="AES256")
+        return True
+    fd, tmp = tempfile.mkstemp(dir=SITES_DIR, suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        json.dump(doc, f)
+    os.replace(tmp, _path(site_id))
+    return True
+
+
 def read(site_id: str):
     """The stored document, or None if there is no such site."""
     if not valid_id(site_id):

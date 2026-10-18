@@ -51,6 +51,7 @@ from shapely.geometry import Point, Polygon
 from shapely.ops import nearest_points
 
 from cameras import Camera, make_wedge_footprint, points_needed
+import calibration
 
 
 class PlanError(Exception):
@@ -576,6 +577,15 @@ def cameras_from_records(records, grid_m):
     for i, r in enumerate(records):
         pos = (float(r["position"][0]), float(r["position"][1]))
         fov, rng, heading = float(r["fov_deg"]), float(r["range_m"]), float(r["heading_deg"])
+        cal = r.get("calibration")
+        if cal:
+            # calibrated from the camera's own picture: the measured ground, not the guessed wedge
+            poly = calibration.polygon_of(cal)
+            fp = calibration.footprint_points(poly, grid_m, seed=i)
+            cams.append(Camera(r["name"], pos, fp, rng, bool(r.get("online", True)),
+                               heading_deg=heading % 360, fov_deg=fov,
+                               view_polygon=[list(p) for p in cal["ground"]], view_heading_deg=heading % 360))
+            continue
         fp = make_wedge_footprint(pos, heading, fov, rng, n_points=points_needed(fov, rng, grid_m), seed=i)
         cams.append(Camera(r["name"], pos, fp, rng, bool(r.get("online", True)),
                            heading_deg=heading % 360, fov_deg=fov))

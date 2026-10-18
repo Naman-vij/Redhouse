@@ -1,7 +1,8 @@
-﻿"""
+"""
 ring_cameras.py (route)
 
 GET /api/ring/cameras
+GET /api/ring/snapshot?device=<ring device id>   the camera's latest saved picture (JPEG/PNG)
 
 The browser sends the Ring token in the standard header
     Authorization: Bearer <token>
@@ -22,7 +23,7 @@ SECURITY NOTES
 
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from app.ring.reader import RingCamera, RingReader, RingReadError, RingZone
 
@@ -97,3 +98,27 @@ def list_cameras(response: Response,
     # keep a copy.
     response.headers["Cache-Control"] = "no-store"
     return {"cameras": [_camera_json(c) for c in cameras]}
+
+
+@router.get("/snapshot")
+def camera_snapshot(device: str = Query(..., max_length=200, description="The Ring device id"),
+                    authorization: str | None = Header(default=None),
+                    x_ring_token: str | None = Header(default=None),
+                    reader: RingReader = Depends(get_reader)):
+    """
+    The camera's newest saved picture, passed straight through. Used to calibrate what the camera really sees.
+
+    NOTE: the picture is not stored on the server. It goes to the browser, where the person clicks spots on it;
+    only those spots (numbers) are kept.
+    """
+    token = _token_from_headers(authorization, x_ring_token)
+    try:
+        shot = reader.fetch_snapshot(token, device)
+    except RingReadError as exc:
+        # 401 = token; 404/403/503 = nothing to show right now (the message says why); anything else = Ring.
+        status = exc.status_code if exc.status_code in (400, 401, 403, 404, 429, 503) else 502
+        raise HTTPException(status_code=status, detail=exc.title) from None
+    headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+    if shot.captured_at:
+        headers["X-Captured-At"] = shot.captured_at
+    return Response(content=shot.data, media_type=shot.media_type, headers=headers)

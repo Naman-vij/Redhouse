@@ -32,7 +32,7 @@ function Dial({ heading, fov, online }) {
   )
 }
 
-function Card({ cam, live, turn, heading, selected, impact, pending, onSelect, onTurn, onToggle }) {
+function Card({ cam, live, turn, heading, selected, impact, pending, onSelect, onTurn, onToggle, onCalibrate, onUncalibrate }) {
   const ring = live[cam.name]
   const online = cam.online
   return (
@@ -41,6 +41,7 @@ function Card({ cam, live, turn, heading, selected, impact, pending, onSelect, o
         <h3>{cam.name}</h3>
         <span className={online ? 'pill pill-on' : 'pill pill-off'}>{online ? 'Online' : 'Offline'}</span>
         {ring && <span className="pill pill-ring">Ring</span>}
+        {cam.calibrated && <span className="pill pill-measured">Measured view</span>}
       </div>
 
       <div className="cam-body">
@@ -85,6 +86,22 @@ function Card({ cam, live, turn, heading, selected, impact, pending, onSelect, o
         )}
       </div>
 
+      <div className="cam-calibrate">
+        <p>
+          {cam.calibrated
+            ? 'What this camera sees was measured from its own picture.'
+            : 'What this camera sees is a guess from its direction and angle.'}
+        </p>
+        <div className="cam-calibrate-buttons">
+          <button className="button button-small" onClick={onCalibrate}>
+            <Icon name="camera" size={15} /> {cam.calibrated ? 'Measure again' : 'Measure from its picture'}
+          </button>
+          {cam.calibrated && onUncalibrate && (
+            <button className="button button-small button-quiet" onClick={onUncalibrate}>Use the guess again</button>
+          )}
+        </div>
+      </div>
+
       {selected && (
         <dl className="cam-impact" aria-busy={pending} aria-live="polite">
           {impact.floor && (
@@ -114,7 +131,7 @@ function Card({ cam, live, turn, heading, selected, impact, pending, onSelect, o
 
 export default function CameraCards({
   cameras, live, turns, headings, selected, doors, floor, pending, plan, preview,
-  onSelect, onTurn, onToggle, onPreview,
+  onSelect, onTurn, onToggle, onPreview, onCalibrate, onUncalibrate,
 }) {
   const adds = plan.status === 'ok' ? plan.data.more_cameras.additions : []
   const canSuggest = plan.status === 'ok' && plan.data.more_cameras.needed && adds.length > 0
@@ -136,6 +153,8 @@ export default function CameraCards({
             onSelect={() => onSelect(cam.name)}
             onTurn={(a) => onTurn(cam.name, a)}
             onToggle={() => onToggle(cam.name)}
+            onCalibrate={() => onCalibrate(cam.name)}
+            onUncalibrate={onUncalibrate ? () => onUncalibrate(cam.name) : null}
           />
         ))}
         <li className="cam-card cam-add">

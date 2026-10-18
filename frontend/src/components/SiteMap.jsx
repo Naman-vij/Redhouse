@@ -24,8 +24,21 @@ const niceScaleBar = (span) => (span < 14 ? 2 : span < 40 ? 5 : span < 90 ? 10 :
 
 const rad = (deg) => (deg * Math.PI) / 180
 
-/** The wedge a camera can see, as an SVG points string. */
+/**
+ * What a camera sees, as an SVG points string. A calibrated camera has its MEASURED ground (view_polygon),
+ * which the server sent for the heading in polygon_heading; turning the camera turns that polygon about the
+ * camera. Any other camera gets the nominal wedge.
+ */
 function wedgePoints(cam, Y) {
+  if (cam.view_polygon) {
+    const [px, py] = cam.position
+    const a = rad(cam.heading_deg - (cam.polygon_heading ?? cam.heading_deg))
+    const c = Math.cos(a), s = Math.sin(a)
+    return cam.view_polygon
+      .map(([x, y]) => [px + (x - px) * c - (y - py) * s, py + (x - px) * s + (y - py) * c])
+      .map(([x, y]) => `${x.toFixed(2)},${Y(y).toFixed(2)}`)
+      .join(' ')
+  }
   const [cx, cy] = cam.position
   const pts = [[cx, Y(cy)]]
   const steps = 28
@@ -82,7 +95,9 @@ export default function SiteMap({
   const indoor = site.mode === 'indoor'
   // While a camera is being turned, draw it at its NEW heading straight away.
   // The coverage and routes catch up when the simulator answers.
-  const cams = site.cameras.map((c) => (headings && headings[c.name] !== undefined ? { ...c, heading_deg: headings[c.name] } : c))
+  const cams = site.cameras.map((c) =>
+    headings && headings[c.name] !== undefined ? { ...c, polygon_heading: c.heading_deg, heading_deg: headings[c.name] } : c,
+  )
   const xs = site.boundary.map((p) => p[0])
   const ys = site.boundary.map((p) => p[1])
   const minx = Math.min(...xs), maxx = Math.max(...xs)
@@ -218,12 +233,14 @@ export default function SiteMap({
       {/* the property line goes on top of the fills so it stays crisp */}
       <polygon className={indoor ? 'floor-line' : 'property-line'} points={polyPoints(site.boundary, Y)} />
 
-      {/* what each camera can see: the nominal view wedge. Not drawn indoors: walls block the view, so the
+      {/* what each camera can see: the nominal view wedge, or for a calibrated camera the ground measured from
+          its own picture (solid outline). Not drawn indoors: walls block the view, so the
           teal coverage is the truth there and a wedge through a wall would mislead. */}
       {!indoor && cams.map((cam) => (
         <polygon
           key={`wedge-${cam.name}`}
-          className={!cam.online ? 'wedge wedge-off' : cam.proposed ? 'wedge wedge-new' : 'wedge'}
+          clipPath={cam.calibrated ? 'url(#property)' : undefined}
+          className={`${!cam.online ? 'wedge wedge-off' : cam.proposed ? 'wedge wedge-new' : 'wedge'}${cam.calibrated ? ' wedge-measured' : ''}`}
           points={wedgePoints(cam, Y)}
         />
       ))}

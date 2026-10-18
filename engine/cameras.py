@@ -26,6 +26,11 @@ class Camera:
     # view wedge. Optional so older code that builds a Camera by hand still works.
     heading_deg: float | None = None
     fov_deg: float | None = None
+    # NOTE: set only for a camera calibrated from its own picture (calibration.py). view_polygon is the ground
+    # it really sees, [[x, y], ...] in metres, as it was when view_heading_deg was its heading. A turned camera
+    # keeps both, so the map can turn the polygon by (heading_deg - view_heading_deg).
+    view_polygon: list | None = None
+    view_heading_deg: float | None = None
 
 
 def points_needed(fov_deg, max_range_m, grid_m, per_cell=6, floor=3000):

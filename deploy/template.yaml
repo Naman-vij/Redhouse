@@ -178,7 +178,7 @@ Resources:
                 Resource: [!Ref OriginSecret, !Ref RingKey]
               - Sid: SendTheReportEmail
                 Effect: Allow
-                Action: ses:SendEmail
+                Action: [ses:SendEmail, ses:SendRawEmail]
                 Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
               - Sid: AskBedrock
                 Effect: Allow
