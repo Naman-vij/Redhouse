@@ -113,4 +113,4 @@ This makes `redhouse-release.tgz`. Upload it to AWS CloudShell, extract it, and 
 
 ## Licence
 
-AGPL-3.0. The PDF report uses PyMuPDF, which is AGPL.
+MIT (see [LICENSE](LICENSE)). The PDF features use PyMuPDF, which is licensed AGPL-3.0. If you redistribute a build that includes it, follow its terms.
