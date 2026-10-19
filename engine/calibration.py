@@ -395,7 +395,7 @@ def place_camera(image_pts, ground_pts, aspect, lens_deg=DEFAULT_LENS_DEG):
                         "Adjust the lens width, or drag the camera on the plan if you know where it is.")
     if h > 12 or tilt < -5 or tilt > 85:
         warnings.append("That height or tilt looks unusual for a wall camera. Check the spots.")
-    return {"position": [round(x, 2), round(y, 2)], "height_m": round(h, 2), "heading_deg": round(heading, 1),
+    return {"position": [round(x, 2), round(y, 2)], "height_m": round(h, 2), "heading_deg": round(heading % 360.0, 1) % 360.0,
             "tilt_deg": round(tilt, 1), "lens_deg": round(lens, 1), "uncertainty_m": round(moved, 2),
             "warnings": warnings}
 

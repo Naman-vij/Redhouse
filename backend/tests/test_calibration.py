@@ -268,3 +268,27 @@ def test_four_spots_can_be_previewed_but_not_saved():
     assert client.post("/api/calibration/preview", json=four).status_code == 200
     r = client.post("/api/calibration", json=four)
     assert r.status_code == 422 and "5th spot" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------- the sample pictures
+
+def test_sample_pictures_give_a_checked_view_and_the_right_camera():
+    import json
+    import os
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "src", "lib", "samplePictures.json")
+    if not os.path.exists(path):
+        pytest.skip("frontend folder not present")
+    samples = json.load(open(path))
+    assert set(samples) == {"C1", "C2", "C3"}
+    from cameras import make_demo_cameras
+    cams = {c.name: c for c in make_demo_cameras()}
+    for name, s in samples.items():
+        img = [sp["img"] for sp in s["spots"]]
+        gnd = [sp["ground"] for sp in s["spots"]]
+        assert len(img) == 5 and tuple(s["camera"]) == tuple(cams[name].position)
+        cal = C.calibrate(img, gnd, tuple(s["camera"]), cams[name].max_range_m)
+        assert cal["checked"] and cal["max_error_m"] < 0.05 and not cal["warnings"]
+        pose = C.place_camera(img, gnd, s["aspect"], s["lens_deg"])
+        assert np.hypot(pose["position"][0] - s["camera"][0], pose["position"][1] - s["camera"][1]) < 0.1
+        assert 0 <= pose["heading_deg"] < 360
+        assert abs(((pose["heading_deg"] - cams[name].heading_deg + 180) % 360) - 180) < 2

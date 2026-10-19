@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { previewCalibration, saveCalibration } from '../api'
 import { useDebounced } from '../lib/useDebounced'
+import SAMPLES from '../lib/samplePictures.json'
 import Icon from './Icon'
 
 const MAX_SPOTS = 8
@@ -151,6 +152,19 @@ export default function CalibratePanel({ site, scene, camera, ring, ringLinked, 
     }
   }
 
+  // The sample picture is drawn from the demo house, so it only fits a demo camera that is still where the demo puts it.
+  const sample = SAMPLES[camera.name]
+  const sampleFits =
+    !!sample && Math.abs(camera.position[0] - sample.camera[0]) < 0.05 && Math.abs(camera.position[1] - sample.camera[1]) < 0.05
+
+  function fromSample() {
+    setProblem(null)
+    setPicture({ url: sample.picture, capturedAt: null, source: 'upload', sample: true })
+    setSpots(sample.spots.map((s) => ({ img: s.img, ground: s.ground })))
+    setPlace(false)
+    setLens(sample.lens_deg)
+  }
+
   function fromFile(e) {
     const file = e.target.files?.[0]
     e.target.value = ''
@@ -253,6 +267,11 @@ export default function CalibratePanel({ site, scene, camera, ring, ringLinked, 
           <button className="button" onClick={() => fileRef.current?.click()}>
             <Icon name="upload" size={17} /> Upload a screenshot
           </button>
+          {sampleFits && (
+            <button className="button" onClick={fromSample}>
+              <Icon name="camera" size={17} /> Try the sample picture
+            </button>
+          )}
           <input ref={fileRef} type="file" accept="image/png,image/jpeg" hidden onChange={fromFile} />
           {!ringLinked && <span className="muted small">To use Ring, connect it and link this camera first.</span>}
         </div>
@@ -260,7 +279,9 @@ export default function CalibratePanel({ site, scene, camera, ring, ringLinked, 
           <p className="muted small cal-note">
             {picture.source === 'ring'
               ? `Ring's latest saved picture${picture.capturedAt ? `, taken ${when(picture.capturedAt)}` : ''}. Ring gives the last picture the camera saved (from a motion event or live view), not a new one.`
-              : 'Your picture.'}{' '}
+              : picture.sample
+                ? 'A sample picture drawn from the demo house, not a real camera. Its five spots are already matched; use Clear spots to match your own.'
+                : 'Your picture.'}{' '}
             It is not stored anywhere; only the spots you click are saved.
           </p>
         )}
